@@ -1,0 +1,108 @@
+{
+  "name": "codemeld",
+  "displayName": "CodeMeld",
+  "description": "Visual diff and merge editor for Visual Studio Code with connected change blocks and interactive merge controls.",
+  "version": "0.5.1",
+  "publisher": "local-dev",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:codemeld.selectForCompare",
+    "onCommand:codemeld.compareWithSelected"
+  ],
+  "main": "./dist/extension/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codemeld.selectForCompare",
+        "title": "CodeMeld: Select for Compare"
+      },
+      {
+        "command": "codemeld.compareWithSelected",
+        "title": "CodeMeld: Compare with Selected"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "codemeld.selectForCompare",
+          "group": "9_compare@1",
+          "when": "resourceScheme =~ /^(file|vscode-remote)$/"
+        },
+        {
+          "command": "codemeld.compareWithSelected",
+          "group": "9_compare@2",
+          "when": "resourceScheme =~ /^(file|vscode-remote)$/"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "CodeMeld",
+      "properties": {
+        "codemeld.appearance.primary": {
+          "type": "string",
+          "default": "",
+          "pattern": "^$|^#[0-9A-Fa-f]{6}$",
+          "markdownDescription": "Primary CodeMeld accent color. Leave empty to inherit the active VS Code theme (`focusBorder`)."
+        },
+        "codemeld.appearance.add": {
+          "type": "string",
+          "default": "",
+          "pattern": "^$|^#[0-9A-Fa-f]{6}$",
+          "markdownDescription": "Color used for add actions. Leave empty to inherit the active VS Code theme (`gitDecoration.addedResourceForeground`)."
+        },
+        "codemeld.appearance.delete": {
+          "type": "string",
+          "default": "",
+          "pattern": "^$|^#[0-9A-Fa-f]{6}$",
+          "markdownDescription": "Color used for delete actions. Leave empty to inherit the active VS Code theme (`gitDecoration.deletedResourceForeground`)."
+        },
+        "codemeld.appearance.editorBackground": {
+          "type": "string",
+          "default": "",
+          "pattern": "^$|^#[0-9A-Fa-f]{6}$",
+          "markdownDescription": "Editor/list background color. Leave empty to inherit `editor.background` from the active VS Code theme."
+        },
+        "codemeld.appearance.gutter": {
+          "type": "string",
+          "default": "",
+          "pattern": "^$|^#[0-9A-Fa-f]{6}$",
+          "markdownDescription": "Center gutter background color. Leave empty to inherit `editorWidget.background` from the active VS Code theme."
+        },
+        "codemeld.appearance.highlight": {
+          "type": "number",
+          "default": 10,
+          "minimum": 5,
+          "maximum": 22,
+          "markdownDescription": "Intensity of CodeMeld diff highlighting, in percent."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "watch": "tsc -w -p tsconfig.json",
+    "test:core": "node --test",
+    "vscode:prepublish": "npm run compile && npm run copy:monaco",
+    "package:vsix": "vsce package --allow-missing-repository",
+    "install:vsix": "code --install-extension codemeld-0.5.1.vsix",
+    "copy:monaco": "node scripts/copy-monaco.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.95.0",
+    "typescript": "^5.8.0",
+    "@vscode/vsce": "^3.6.0"
+  },
+  "dependencies": {
+    "monaco-editor": "^0.52.2"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "license": "MIT"
+}
