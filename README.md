@@ -8,7 +8,7 @@ CodeMeld is a visual diff and merge editor for Visual Studio Code.
 - File and directory comparison tabs.
 - Line and intra-line diff highlighting.
 - Visual bridges and interactive merge controls.
-- Directory tree comparison with content/time/metadata filters.
+- Directory tree comparison with content/time/metadata filters and persistent glob-style exclusion rules.
 - Field-level metadata comparison and transfer.
 - Configurable appearance.
 
@@ -81,6 +81,13 @@ For case-only name conflicts on case-insensitive filesystems, directory-view arr
 ## Settings
 
 Appearance settings are exposed through the standard VS Code Settings UI under **CodeMeld** and can participate in Settings Sync. Empty color values inherit the active VS Code theme.
+
+## Repository
+
+Source code: https://github.com/zaazy-code/codemeld-vscode
+
+Issues: https://github.com/zaazy-code/codemeld-vscode/issues
+
 ## Build an installable VSIX
 
 ```bash
@@ -88,29 +95,21 @@ npm install
 npm run package:vsix
 ```
 
-This produces `codemeld-<version>.vsix` in the project root. Install it with:
+The packaging step compiles CodeMeld, copies the Monaco runtime required by the webview into `dist/monaco/vs`, excludes development-only files from the VSIX, and produces `codemeld-<version>.vsix` in the project root.
+
+Install version 0.5.2 with:
 
 ```bash
-code --install-extension codemeld-<version>.vsix
+code --install-extension codemeld-0.5.2.vsix
 ```
 
 Or in VS Code use **Extensions → … → Install from VSIX…**.
 
+## License
 
-## Build an installable VSIX
+CodeMeld is licensed under the [MIT License](LICENSE). Third-party components and their notices are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-```bash
-npm install
-npm run package:vsix
-```
 
-The packaging step compiles CodeMeld, copies only the Monaco runtime required
-by the webview into `dist/monaco/vs`, excludes development dependencies and
-sources from the VSIX, and produces `codemeld-<version>.vsix` in the project
-root.
+## Directory exclusion filters
 
-Install it with:
-
-```bash
-code --install-extension codemeld-0.5.1.vsix
-```
+Directory comparisons can exclude files and folders before analysis. Open **Filters** in the directory comparison toolbar and add named masks such as `.git/`, `node_modules/`, `*.log`, or `build/**`. Rules are stored in `codemeld.directory.excludeFilters` and persist in VS Code settings.

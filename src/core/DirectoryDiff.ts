@@ -6,6 +6,83 @@ import type { FileMetadata, MetadataField, PlatformCapabilities } from '../platf
 
 export type { FileMetadata, MetadataField, PlatformCapabilities } from '../platform/types';
 
+let directoryDiffLogger: ((message: string) => void) | undefined;
+
+export function setDirectoryDiffLogger(logger: ((message: string) => void) | undefined): void {
+  directoryDiffLogger = logger;
+}
+
+function logDirectoryDiff(message: string): void {
+  directoryDiffLogger?.(message);
+}
+
+
+export interface DirectoryExcludeFilter {
+  name: string;
+  pattern: string;
+}
+
+const DIRECTORY_EXCLUDE_FILTERS_KEY = 'directory.excludeFilters';
+const DIRECTORY_EXCLUDE_FILTERS_STATE_KEY = 'codemeld.directory.excludeFilters';
+
+function normalizeDirectoryExcludeFilters(raw: unknown): DirectoryExcludeFilter[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap(item => {
+    if (!item || typeof item !== 'object') return [];
+    const value = item as { name?: unknown; pattern?: unknown };
+    const name = typeof value.name === 'string' ? value.name.trim() : '';
+    const pattern = typeof value.pattern === 'string' ? value.pattern.trim() : '';
+    return pattern ? [{ name, pattern }] : [];
+  });
+}
+
+export function readDirectoryExcludeFilters(context?: vscode.ExtensionContext): DirectoryExcludeFilter[] {
+  const configuration = vscode.workspace.getConfiguration('codemeld');
+  const inspected = configuration.inspect<unknown[]>(DIRECTORY_EXCLUDE_FILTERS_KEY);
+  const hasExplicitConfiguration = inspected?.globalValue !== undefined ||
+    inspected?.workspaceValue !== undefined || inspected?.workspaceFolderValue !== undefined;
+
+  if (hasExplicitConfiguration) {
+    return normalizeDirectoryExcludeFilters(configuration.get<unknown[]>(DIRECTORY_EXCLUDE_FILTERS_KEY, []));
+  }
+
+  // globalState is a persistence fallback for remote/workspace extension hosts.
+  // It also lets older builds recover rules if VS Code did not materialize the
+  // contributed setting correctly. Explicit VS Code configuration always wins.
+  return normalizeDirectoryExcludeFilters(context?.globalState.get<unknown[]>(DIRECTORY_EXCLUDE_FILTERS_STATE_KEY, []));
+}
+
+export async function writeDirectoryExcludeFilters(
+  context: vscode.ExtensionContext,
+  filters: DirectoryExcludeFilter[],
+): Promise<DirectoryExcludeFilter[]> {
+  const normalized = normalizeDirectoryExcludeFilters(filters);
+  const configuration = vscode.workspace.getConfiguration('codemeld');
+
+  const inspected = configuration.inspect<DirectoryExcludeFilter[]>(DIRECTORY_EXCLUDE_FILTERS_KEY);
+  if (inspected?.workspaceFolderValue !== undefined) {
+    await configuration.update(DIRECTORY_EXCLUDE_FILTERS_KEY, undefined, vscode.ConfigurationTarget.WorkspaceFolder);
+  }
+  if (inspected?.workspaceValue !== undefined) {
+    await configuration.update(DIRECTORY_EXCLUDE_FILTERS_KEY, undefined, vscode.ConfigurationTarget.Workspace);
+  }
+
+  // Persist in both standard VS Code settings and extension globalState.
+  // The setting remains visible/editable in Settings and participates in Sync;
+  // globalState is only used when no explicit configuration value exists.
+  await context.globalState.update(DIRECTORY_EXCLUDE_FILTERS_STATE_KEY, normalized);
+  await configuration.update(DIRECTORY_EXCLUDE_FILTERS_KEY, normalized, vscode.ConfigurationTarget.Global);
+
+  const inspectedAfter = vscode.workspace.getConfiguration('codemeld').inspect<unknown[]>(DIRECTORY_EXCLUDE_FILTERS_KEY);
+  const rawAfter = vscode.workspace.getConfiguration('codemeld').get<unknown[]>(DIRECTORY_EXCLUDE_FILTERS_KEY, []);
+  const effective = readDirectoryExcludeFilters(context);
+  logDirectoryDiff(`[filters] saved request: ${JSON.stringify(normalized)}`);
+  logDirectoryDiff(`[filters] raw config after save: ${JSON.stringify(rawAfter)}`);
+  logDirectoryDiff(`[filters] global explicit after save: ${JSON.stringify(inspectedAfter?.globalValue ?? null)}`);
+  logDirectoryDiff(`[filters] effective after save: ${JSON.stringify(effective)}`);
+  return effective;
+}
+
 export type DirectoryDiffKind = 'same' | 'onlyLeft' | 'onlyRight' | 'content' | 'metadata' | 'content+metadata' | 'case' | 'type';
 
 export interface DirectorySideEntry {
@@ -44,9 +121,16 @@ interface CollectedEntry extends DirectorySideEntry {
   nativePath: string;
 }
 
-export async function compareDirectories(leftRoot: vscode.Uri, rightRoot: vscode.Uri): Promise<DirectoryComparison> {
+export async function compareDirectories(leftRoot: vscode.Uri, rightRoot: vscode.Uri, excludeFilters: DirectoryExcludeFilter[] = readDirectoryExcludeFilters()): Promise<DirectoryComparison> {
   const adapter = await getPlatformAdapter();
-  const [left, right] = await Promise.all([collect(leftRoot), collect(rightRoot)]);
+  logDirectoryDiff(`Directory compare: ${leftRoot.fsPath} ↔ ${rightRoot.fsPath}`);
+  if (excludeFilters.length) {
+    logDirectoryDiff('Directory exclusions:');
+    for (const filter of excludeFilters) logDirectoryDiff(`  ${filter.name || '(unnamed)'} -> ${filter.pattern}`);
+  } else {
+    logDirectoryDiff('Directory exclusions: none');
+  }
+  const [left, right] = await Promise.all([collect(leftRoot, excludeFilters), collect(rightRoot, excludeFilters)]);
   const [leftCaseSensitive, rightCaseSensitive] = await Promise.all([
     detectCaseSensitivity(leftRoot.fsPath, left),
     detectCaseSensitivity(rightRoot.fsPath, right),
@@ -198,7 +282,7 @@ function toggleOneAsciiLetter(value: string): string {
   return value;
 }
 
-async function collect(root: vscode.Uri): Promise<Map<string, CollectedEntry>> {
+async function collect(root: vscode.Uri, excludeFilters: DirectoryExcludeFilter[]): Promise<Map<string, CollectedEntry>> {
   const adapter = await getPlatformAdapter();
   const result = new Map<string, CollectedEntry>();
   await walk(root.fsPath, '');
@@ -208,6 +292,11 @@ async function collect(root: vscode.Uri): Promise<Map<string, CollectedEntry>> {
     const entries = await fs.readdir(nativeDir, { withFileTypes: true });
     for (const dirent of entries) {
       const relativePath = relativeDir ? `${relativeDir}/${dirent.name}` : dirent.name;
+      const matchedExclude = matchExcludedPath(relativePath, dirent.isDirectory(), excludeFilters);
+      if (matchedExclude) {
+        logDirectoryDiff(`  excluded ${dirent.isDirectory() ? 'directory' : 'file'}: ${relativePath} [${matchedExclude.pattern}]`);
+        continue;
+      }
       const nativePath = path.join(nativeDir, dirent.name);
       const stat = await fs.lstat(nativePath);
       const type: DirectorySideEntry['type'] = stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : stat.isSymbolicLink() ? 'symlink' : 'other';
@@ -223,6 +312,60 @@ async function collect(root: vscode.Uri): Promise<Map<string, CollectedEntry>> {
       if (stat.isDirectory()) await walk(nativePath, relativePath);
     }
   }
+}
+
+
+function matchExcludedPath(relativePath: string, isDirectory: boolean, filters: DirectoryExcludeFilter[]): DirectoryExcludeFilter | undefined {
+  const normalized = relativePath.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+  const basename = normalized.slice(normalized.lastIndexOf('/') + 1);
+
+  for (const filter of filters) {
+    let pattern = filter.pattern.trim().replace(/\\/g, '/').replace(/^\.\//, '');
+    if (!pattern) continue;
+
+    const directoryOnly = pattern.endsWith('/');
+    pattern = pattern.replace(/\/+$/, '').replace(/^\/+/, '');
+    if (!pattern || (directoryOnly && !isDirectory)) continue;
+
+    // A pattern without a slash is intentionally a basename rule and therefore
+    // matches at any depth. This makes `.git`, `node_modules` and `*.log`
+    // predictable and independent of the compared root path.
+    if (!pattern.includes('/')) {
+      if (globMatches(basename, pattern)) return filter;
+      continue;
+    }
+
+    // `foo/**` excludes the directory itself as well as everything below it.
+    if (pattern.endsWith('/**')) {
+      const base = pattern.slice(0, -3).replace(/\/+$/, '');
+      if (base && (normalized === base || normalized.startsWith(`${base}/`))) return filter;
+      continue;
+    }
+
+    if (globMatches(normalized, pattern)) return filter;
+  }
+  return undefined;
+}
+
+function isExcludedPath(relativePath: string, isDirectory: boolean, filters: DirectoryExcludeFilter[]): boolean {
+  return matchExcludedPath(relativePath, isDirectory, filters) !== undefined;
+}
+
+function globMatches(value: string, pattern: string): boolean {
+  let source = '^';
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '*') {
+      if (pattern[i + 1] === '*') {
+        while (pattern[i + 1] === '*') i++;
+        source += '.*';
+      } else source += '[^/]*';
+    } else if (ch === '?') source += '[^/]';
+    else if ('\\.^$+{}()|[]'.includes(ch)) source += '\\' + ch;
+    else source += ch;
+  }
+  source += '$';
+  try { return new RegExp(source).test(value); } catch { return false; }
 }
 
 function publicEntry(entry: CollectedEntry): DirectorySideEntry {

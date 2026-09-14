@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { DiffEngine } from '../core/DiffEngine';
-import { compareDirectories } from '../core/DirectoryDiff';
+import { compareDirectories, readDirectoryExcludeFilters, setDirectoryDiffLogger } from '../core/DirectoryDiff';
 import { CompareManager } from '../webview/CompareManager';
 import { getPlatformAdapter } from '../platform/PlatformFactory';
 
@@ -9,6 +9,7 @@ let selectedForCompare: vscode.Uri | undefined;
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const output = vscode.window.createOutputChannel('CodeMeld');
   context.subscriptions.push(output);
+  setDirectoryDiffLogger(message => output.appendLine(message));
   try {
     const adapter = await getPlatformAdapter();
     const c = adapter.capabilities;
@@ -59,7 +60,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
       if (leftIsDir) {
         try {
-          const comparison = await compareDirectories(left, right);
+          const comparison = await compareDirectories(left, right, readDirectoryExcludeFilters(context));
           CompareManager.showDirectoryComparison(context, { leftUri: left, rightUri: right, comparison });
         } catch (error) {
           void vscode.window.showErrorMessage(`CodeMeld: directory comparison failed: ${error instanceof Error ? error.message : String(error)}`);
